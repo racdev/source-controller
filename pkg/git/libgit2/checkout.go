@@ -19,6 +19,7 @@ package libgit2
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -64,6 +65,7 @@ func (c *CheckoutBranch) Checkout(ctx context.Context, path, url string, opts *g
 		FetchOptions: &git2go.FetchOptions{
 			DownloadTags:    git2go.DownloadTagsNone,
 			RemoteCallbacks: RemoteCallbacks(ctx, opts),
+			ProxyOptions:    getProxyOptions(url),
 		},
 		CheckoutBranch: c.Branch,
 	})
@@ -93,6 +95,7 @@ func (c *CheckoutTag) Checkout(ctx context.Context, path, url string, opts *git.
 		FetchOptions: &git2go.FetchOptions{
 			DownloadTags:    git2go.DownloadTagsAll,
 			RemoteCallbacks: RemoteCallbacks(ctx, opts),
+			ProxyOptions:    getProxyOptions(url),
 		},
 	})
 	if err != nil {
@@ -116,6 +119,7 @@ func (c *CheckoutCommit) Checkout(ctx context.Context, path, url string, opts *g
 		FetchOptions: &git2go.FetchOptions{
 			DownloadTags:    git2go.DownloadTagsNone,
 			RemoteCallbacks: RemoteCallbacks(ctx, opts),
+			ProxyOptions:    getProxyOptions(url),
 		},
 	})
 	if err != nil {
@@ -147,6 +151,7 @@ func (c *CheckoutSemVer) Checkout(ctx context.Context, path, url string, opts *g
 		FetchOptions: &git2go.FetchOptions{
 			DownloadTags:    git2go.DownloadTagsAll,
 			RemoteCallbacks: RemoteCallbacks(ctx, opts),
+			ProxyOptions:    getProxyOptions(url),
 		},
 	})
 	if err != nil {
@@ -304,4 +309,15 @@ func buildSignature(s *git2go.Signature) git.Signature {
 		Email: s.Email,
 		When:  s.When,
 	}
+}
+
+func getProxyOptions(url string) git2go.ProxyOptions {
+	proxyOptions := git2go.ProxyOptions{}
+	req, _ := http.NewRequest("GET", url, nil)
+	proxy, _ := http.ProxyFromEnvironment(req)
+	if proxy != nil {
+		proxyOptions.Type = git2go.ProxyTypeSpecified
+		proxyOptions.Url = proxy.String()
+	}
+	return proxyOptions
 }
