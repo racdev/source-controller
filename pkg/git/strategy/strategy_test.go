@@ -525,9 +525,6 @@ func TestCheckoutStrategyForLibGit2Implementation_WithProxySupport(t *testing.T)
 			// 	fmt.Println("Setting no proxy")
 			// 	os.Setenv("NO_PROXY", "github.com")
 			// 	os.Setenv("no_proxy", "github.com")
-			// } else {
-			// 	os.Setenv("NO_PROXY", "")
-			// 	os.Setenv("no_proxy", "")
 			// }
 			defer func() {
 				os.Unsetenv("HTTPS_PROXY")
