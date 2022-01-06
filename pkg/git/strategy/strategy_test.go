@@ -28,7 +28,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/elazarl/goproxy"
 	"github.com/fluxcd/pkg/gittestserver"
 	"github.com/fluxcd/pkg/ssh"
 	extgogit "github.com/go-git/go-git/v5"
@@ -447,113 +446,6 @@ func TestCheckoutStrategyForImplementation_WithCtxTimeout(t *testing.T) {
 		for _, tt := range cases {
 			t.Run(fmt.Sprintf("%s_%s", gitImpl, tt.name), testFunc(tt, gitImpl))
 		}
-	}
-}
-
-func TestCheckoutStrategyForLibGit2Implementation_WithProxySupport(t *testing.T) {
-	// TODO - uncomment commented lines once version of libgit supports NO_PROXY
-	gitImpl := libgit2.Implementation
-
-	type testCase struct {
-		name     string
-		useProxy bool
-		//setNoProxy  bool
-		goesViaProxy bool
-	}
-
-	cases := []testCase{
-		{
-			name:     "Succeeds using proxy",
-			useProxy: true,
-			//setNoProxy:  false,
-			goesViaProxy: true,
-		},
-		// {
-		// 	name:     "Skips proxy with proxy but NO_PROXY set",
-		// 	useProxy: true,
-		// 	setNoProxy:  true,
-		// 	goesViaProxy: false,
-		// },
-		{
-			name:     "Direct without proxy",
-			useProxy: false,
-			//setNoProxy:  false,
-			goesViaProxy: false,
-		},
-	}
-
-	testFunc := func(tt testCase, impl git.Implementation) func(t *testing.T) {
-		return func(*testing.T) {
-			g := NewWithT(t)
-
-			cloneURL := "https://github.com/git-fixtures/basic.git"
-
-			authOpts := &git.AuthOptions{}
-
-			proxyGotRequest := false
-
-			// Setup proxy
-			proxy := goproxy.NewProxyHttpServer()
-
-			var httpsHandler goproxy.FuncHttpsHandler = func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
-				proxyGotRequest = true
-				return goproxy.OkConnect, host
-			}
-			proxy.OnRequest().HandleConnect(httpsHandler)
-
-			proxyServer := http.Server{
-				Addr:    "localhost:9999",
-				Handler: proxy,
-			}
-
-			// Run the proxy server in a separate goroutine.
-			go func() {
-				proxyServer.ListenAndServe()
-			}()
-			defer proxyServer.Close()
-
-			time.Sleep(50 * time.Millisecond) // wait for proxy to start
-
-			// Setup environment for the test
-			if tt.useProxy {
-				os.Setenv("HTTPS_PROXY", fmt.Sprintf("http://%s", proxyServer.Addr))
-				os.Setenv("https_proxy", fmt.Sprintf("http://%s", proxyServer.Addr))
-				os.Setenv("HTTP_PROXY", fmt.Sprintf("http://%s", proxyServer.Addr))
-				os.Setenv("http_proxy", fmt.Sprintf("http://%s", proxyServer.Addr))
-			}
-			// if tt.setNoProxy {
-			// 	fmt.Println("Setting no proxy")
-			// 	os.Setenv("NO_PROXY", "github.com")
-			// 	os.Setenv("no_proxy", "github.com")
-			// }
-			defer func() {
-				os.Unsetenv("HTTPS_PROXY")
-				os.Unsetenv("https_proxy")
-				os.Unsetenv("HTTP_PROXY")
-				os.Unsetenv("http_proxy")
-				os.Unsetenv("NO_PROXY")
-				os.Unsetenv("no_proxy")
-			}()
-
-			checkoutOpts := git.CheckoutOptions{
-				Branch: "master",
-			}
-			checkoutStrategy, err := CheckoutStrategyForImplementation(context.TODO(), impl, checkoutOpts)
-			g.Expect(err).ToNot(HaveOccurred())
-
-			tmpDir, err := os.MkdirTemp("", "test-checkout")
-			g.Expect(err).ToNot(HaveOccurred())
-			defer os.RemoveAll(tmpDir)
-
-			checkoutStrategy.Checkout(context.TODO(), tmpDir, cloneURL, authOpts)
-			g.Expect(proxyGotRequest).To(Equal(tt.goesViaProxy))
-
-		}
-	}
-
-	// Run the test cases against the git implementation.
-	for _, tt := range cases {
-		t.Run(fmt.Sprintf("%s_%s", gitImpl, tt.name), testFunc(tt, gitImpl))
 	}
 }
 
