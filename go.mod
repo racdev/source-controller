@@ -15,6 +15,7 @@ require (
 	github.com/cyphar/filepath-securejoin v0.2.2
 	github.com/docker/go-metrics v0.0.1 // indirect
 	github.com/docker/libtrust v0.0.0-20160708172513-aabc10ec26b7 // indirect
+	github.com/elazarl/goproxy v0.0.0-20180725130230-947c36da3153
 	github.com/fluxcd/pkg/apis/meta v0.10.1
 	github.com/fluxcd/pkg/gittestserver v0.4.2
 	github.com/fluxcd/pkg/gitutil v0.1.0
