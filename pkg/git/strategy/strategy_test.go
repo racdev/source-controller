@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -451,34 +450,35 @@ func TestCheckoutStrategyForImplementation_WithCtxTimeout(t *testing.T) {
 	}
 }
 
-func TestCheckoutStrategyForImplementation_WithProxySupport(t *testing.T) {
-	gitImpls := []git.Implementation{gogit.Implementation, libgit2.Implementation}
+func TestCheckoutStrategyForLibGit2Implementation_WithProxySupport(t *testing.T) {
+	// TODO - uncomment commented lines once version of libgit supports NO_PROXY
+	gitImpl := libgit2.Implementation
 
 	type testCase struct {
 		name     string
-		useproxy bool
-		noproxy  bool
-		wantErr  bool
+		useProxy bool
+		//setNoProxy  bool
+		goesViaProxy bool
 	}
 
 	cases := []testCase{
 		{
 			name:     "Succeeds using proxy",
-			useproxy: true,
-			noproxy:  false,
-			wantErr:  false,
+			useProxy: true,
+			//setNoProxy:  false,
+			goesViaProxy: true,
 		},
+		// {
+		// 	name:     "Skips proxy with proxy but NO_PROXY set",
+		// 	useProxy: true,
+		// 	setNoProxy:  true,
+		// 	goesViaProxy: false,
+		// },
 		{
-			name:     "Fails with proxy but NO_PROXY set",
-			useproxy: true,
-			noproxy:  true,
-			wantErr:  true,
-		},
-		{
-			name:     "Fails without proxy",
-			useproxy: false,
-			noproxy:  false,
-			wantErr:  true,
+			name:     "Direct without proxy",
+			useProxy: false,
+			//setNoProxy:  false,
+			goesViaProxy: false,
 		},
 	}
 
@@ -486,62 +486,60 @@ func TestCheckoutStrategyForImplementation_WithProxySupport(t *testing.T) {
 		return func(*testing.T) {
 			g := NewWithT(t)
 
-			var examplePublicKey, examplePrivateKey, exampleCA []byte
-
-			gitServer, err := gittestserver.NewTempGitServer()
-			g.Expect(err).ToNot(HaveOccurred())
-			defer os.RemoveAll(gitServer.Root())
-
-			username := "test-user"
-			password := "test-password"
-			gitServer.Auth(username, password)
-			gitServer.KeyDir(gitServer.Root())
-
-			// Start the HTTP/HTTPS server.
-			examplePublicKey, err = os.ReadFile("testdata/certs/server.pem")
-			g.Expect(err).ToNot(HaveOccurred())
-			examplePrivateKey, err = os.ReadFile("testdata/certs/server-key.pem")
-			g.Expect(err).ToNot(HaveOccurred())
-			exampleCA, err = os.ReadFile("testdata/certs/ca.pem")
-			g.Expect(err).ToNot(HaveOccurred())
-			err = gitServer.StartHTTPS(examplePublicKey, examplePrivateKey, exampleCA, "example.com")
-			g.Expect(err).ToNot(HaveOccurred())
-
-			defer gitServer.StopHTTP()
-
-			branch := "main"
-			repoPath := "bar/test-reponame"
-			err = gitServer.InitRepo("testdata/repo1", branch, repoPath)
-			g.Expect(err).ToNot(HaveOccurred())
-
-			repoURL := gitServer.HTTPAddress() + "/" + repoPath
+			cloneURL := "https://github.com/git-fixtures/basic.git"
 
 			authOpts := &git.AuthOptions{}
 
-			//setup proxy
+			proxyGotRequest := false
+
+			// Setup proxy
 			proxy := goproxy.NewProxyHttpServer()
-			proxy.OnRequest().DoFunc(
-				func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-					r.Header.Set("Authorization:", "Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=")
-					return r, nil
-				})
-			proxyServer := httptest.NewServer(proxy)
+
+			var httpsHandler goproxy.FuncHttpsHandler = func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+				proxyGotRequest = true
+				return goproxy.OkConnect, host
+			}
+			proxy.OnRequest().HandleConnect(httpsHandler)
+
+			proxyServer := http.Server{
+				Addr:    "localhost:9999",
+				Handler: proxy,
+			}
+
+			// Run the proxy server in a separate goroutine.
+			go func() {
+				proxyServer.ListenAndServe()
+			}()
 			defer proxyServer.Close()
 
-			proxyUrl := proxyServer.URL.String()
-			if tt.useproxy {
-				os.Setenv("HTTPS_PROXY", proxyUrl)
-			} else {
-				os.Setenv("HTTPS_PROXY", "")
+			time.Sleep(50 * time.Millisecond) // wait for proxy to start
+
+			// Setup environment for the test
+			if tt.useProxy {
+				os.Setenv("HTTPS_PROXY", fmt.Sprintf("http://%s", proxyServer.Addr))
+				os.Setenv("https_proxy", fmt.Sprintf("http://%s", proxyServer.Addr))
+				os.Setenv("HTTP_PROXY", fmt.Sprintf("http://%s", proxyServer.Addr))
+				os.Setenv("http_proxy", fmt.Sprintf("http://%s", proxyServer.Addr))
 			}
-			if tt.noproxy {
-				os.Setenv("NO_PROXY", repoUrl)
-			} else {
-				os.Setenv("NO_PROXY", "")
-			}
+			// if tt.setNoProxy {
+			// 	fmt.Println("Setting no proxy")
+			// 	os.Setenv("NO_PROXY", "github.com")
+			// 	os.Setenv("no_proxy", "github.com")
+			// } else {
+			// 	os.Setenv("NO_PROXY", "")
+			// 	os.Setenv("no_proxy", "")
+			// }
+			defer func() {
+				os.Unsetenv("HTTPS_PROXY")
+				os.Unsetenv("https_proxy")
+				os.Unsetenv("HTTP_PROXY")
+				os.Unsetenv("http_proxy")
+				os.Unsetenv("NO_PROXY")
+				os.Unsetenv("no_proxy")
+			}()
 
 			checkoutOpts := git.CheckoutOptions{
-				Branch: branch,
+				Branch: "master",
 			}
 			checkoutStrategy, err := CheckoutStrategyForImplementation(context.TODO(), impl, checkoutOpts)
 			g.Expect(err).ToNot(HaveOccurred())
@@ -550,21 +548,15 @@ func TestCheckoutStrategyForImplementation_WithProxySupport(t *testing.T) {
 			g.Expect(err).ToNot(HaveOccurred())
 			defer os.RemoveAll(tmpDir)
 
-			_, gotErr := checkoutStrategy.Checkout(context.TODO(), tmpDir, repoURL, authOpts)
-			fmt.Println("Got error for test " + tt.name + ": " + gotErr)
-			if tt.wantErr {
-				g.Expect(gotErr).To(HaveOccurred())
-			} else {
-				g.Expect(gotErr).ToNot(HaveOccurred())
-			}
+			checkoutStrategy.Checkout(context.TODO(), tmpDir, cloneURL, authOpts)
+			g.Expect(proxyGotRequest).To(Equal(tt.goesViaProxy))
+
 		}
 	}
 
-	// Run the test cases against the git implementations.
-	for _, gitImpl := range gitImpls {
-		for _, tt := range cases {
-			t.Run(fmt.Sprintf("%s_%s", gitImpl, tt.name), testFunc(tt, gitImpl))
-		}
+	// Run the test cases against the git implementation.
+	for _, tt := range cases {
+		t.Run(fmt.Sprintf("%s_%s", gitImpl, tt.name), testFunc(tt, gitImpl))
 	}
 }
 
